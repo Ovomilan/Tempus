@@ -73,6 +73,9 @@ export default function App() {
   const [editingId, setEditingId] = useState(null);
   const [editVal, setEditVal] = useState({ start: "10:00", end: "19:00", pin: "" });
   const [saving, setSaving] = useState(false);
+  const [adminAuthed, setAdminAuthed] = useState(false);
+  const [adminPassword, setAdminPassword] = useState("");
+  const [adminError, setAdminError] = useState(false);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
@@ -250,11 +253,28 @@ export default function App() {
     setSaving(false);
   }
 
+  async function checkAdminPassword() {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(adminPassword);
+    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+    const { data: rows } = await supabase.from("admin_settings").select("password_hash").single();
+    if (rows && rows.password_hash === hashHex) {
+      setAdminAuthed(true);
+      setAdminError(false);
+      setAdminPassword("");
+    } else {
+      setAdminError(true);
+      setAdminPassword("");
+    }
+  }
+
   function Tabs() {
     return (
       <div style={{ display: "flex", background: "#fff", borderBottom: "1px solid #e8e8e8" }}>
         {[["employee", "Сотрудник"], ["admin", "Администратор"]].map(([v, label]) => (
-          <button key={v} onClick={() => { setView(v); if (v === "employee") setScreen("select"); setCurrentUser(null); setPin(""); }}
+          <button key={v} onClick={() => { setView(v); if (v === "employee") { setScreen("select"); setCurrentUser(null); setPin(""); } }}
             style={{ flex: 1, padding: "13px 0", background: "none", border: "none", borderBottom: view === v ? `2px solid ${accent}` : "2px solid transparent", fontWeight: view === v ? 500 : 400, fontSize: 14, color: view === v ? accent : "#888", cursor: "pointer" }}>
             {label}
           </button>
@@ -454,12 +474,38 @@ export default function App() {
     );
   }
 
+  if (view === "admin" && !adminAuthed) {
+    return (
+      <div style={s.page}>
+        <Tabs />
+        <div style={{ padding: 16, textAlign: "center" }}>
+          <div style={{ width: 60, height: 60, borderRadius: "50%", background: "#f0f0f0", display: "flex", alignItems: "center", justifyContent: "center", margin: "40px auto 16px", fontSize: 26 }}>🔒</div>
+          <div style={{ fontWeight: 500, fontSize: 18, marginBottom: 4 }}>Панель администратора</div>
+          <div style={{ fontSize: 13, color: "#888", marginBottom: 24 }}>Введите пароль для входа</div>
+          <input
+            type="password"
+            placeholder="Пароль"
+            value={adminPassword}
+            onChange={e => { setAdminPassword(e.target.value); setAdminError(false); }}
+            onKeyDown={e => e.key === "Enter" && checkAdminPassword()}
+            style={{ width: "100%", padding: "12px 16px", borderRadius: 12, border: adminError ? `1px solid ${danger}` : "1px solid #ddd", fontSize: 16, background: "#f5f5f5", boxSizing: "border-box", marginBottom: 8 }}
+          />
+          {adminError && <div style={{ color: danger, fontSize: 13, marginBottom: 12 }}>Неверный пароль</div>}
+          <button onClick={checkAdminPassword} style={{ ...s.btn(accent, "#fff"), marginTop: 8 }}>Войти</button>
+        </div>
+      </div>
+    );
+  }
+
   if (view === "admin") {
     return (
       <div style={s.page}>
         <Tabs />
         <div style={{ padding: 16 }}>
-          <div style={{ fontWeight: 500, fontSize: 16, marginBottom: 4 }}>Сотрудники</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+            <div style={{ fontWeight: 500, fontSize: 16 }}>Сотрудники</div>
+            <button onClick={() => setAdminAuthed(false)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: "#888" }}>Выйти</button>
+          </div>
           <div style={{ fontSize: 13, color: "#888", marginBottom: 14 }}>График и PIN</div>
           {employees.map(e => {
             const sch = schedules[e.id];
