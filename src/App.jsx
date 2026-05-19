@@ -253,14 +253,8 @@ export default function App() {
     setSaving(false);
   }
 
-  async function checkAdminPassword() {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(adminPassword);
-    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const hashHex = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
-    const { data: rows } = await supabase.from("admin_settings").select("password_hash").single();
-    if (rows && rows.password_hash === hashHex) {
+  function checkAdminPassword() {
+    if (adminPassword === "Televizor123") {
       setAdminAuthed(true);
       setAdminError(false);
       setAdminPassword("");
