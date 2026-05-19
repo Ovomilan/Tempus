@@ -254,7 +254,7 @@ export default function App() {
     return (
       <div style={{ display: "flex", background: "#fff", borderBottom: "1px solid #e8e8e8" }}>
         {[["employee", "Сотрудник"], ["admin", "Администратор"]].map(([v, label]) => (
-          <button key={v} onClick={() => { setView(v); if (v === "employee") setScreen(currentUser ? "main" : "select"); }}
+          <button key={v} onClick={() => { setView(v); if (v === "employee") setScreen("select"); setCurrentUser(null); setPin(""); }}
             style={{ flex: 1, padding: "13px 0", background: "none", border: "none", borderBottom: view === v ? `2px solid ${accent}` : "2px solid transparent", fontWeight: view === v ? 500 : 400, fontSize: 14, color: view === v ? accent : "#888", cursor: "pointer" }}>
             {label}
           </button>
