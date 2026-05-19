@@ -76,6 +76,9 @@ export default function App() {
   const [newEmp, setNewEmp] = useState({ name: "", role: "waiter", venue_id: "", pin: "" });
   const [saving, setSaving] = useState(false);
   const [selectedSelfie, setSelectedSelfie] = useState(null);
+  const [reportMonth, setReportMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [reportData, setReportData] = useState([]);
+  const [reportLoading, setReportLoading] = useState(false);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
@@ -221,7 +224,42 @@ export default function App() {
     setSaving(false);
   }
 
-  async function saveSchedule(empId, start, end) {
+  useEffect(() => {
+    if (adminAuthed && adminTab === "report") loadReport();
+  }, [adminAuthed, adminTab, reportMonth, selectedVenueId]);
+
+  async function loadReport() {
+    setReportLoading(true);
+    const from = `${reportMonth}-01`;
+    const to = `${reportMonth}-31`;
+    const { data, error } = await supabase
+      .from("attendance")
+      .select("*, employees(name, initials, role, venue_id)")
+      .gte("shift_date", from)
+      .lte("shift_date", to)
+      .order("shift_date", { ascending: false });
+    if (!error) setReportData((data || []).filter(r => r.employees?.venue_id === selectedVenueId));
+    setReportLoading(false);
+  }
+
+  function exportCSV() {
+    const rows = [["Дата", "Сотрудник", "Роль", "Приход", "Уход", "Опоздание (мин)"]];
+    reportData.forEach(r => {
+      rows.push([
+        r.shift_date,
+        r.employees?.name || "",
+        ROLES[r.employees?.role] || "",
+        r.start_at ? fmt(r.start_at) : "—",
+        r.end_at ? fmt(r.end_at) : "—",
+        r.late_minutes || 0,
+      ]);
+    });
+    const csv = rows.map(r => r.join(",")).join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `otchet_${reportMonth}.csv`; a.click();
+  }
     const existing = schedules[empId];
     if (existing) await supabase.from("schedules").update({ start_time: start, end_time: end }).eq("employee_id", empId);
     else await supabase.from("schedules").insert({ employee_id: empId, start_time: start, end_time: end });
@@ -309,7 +347,7 @@ export default function App() {
         </div>
 
         <div style={{ display: "flex", gap: 8, padding: "10px 16px", overflowX: "auto" }}>
-          {[["dashboard", "Дашборд"], ["employees", "Сотрудники"]].map(([t, label]) => (
+          {[["dashboard", "Дашборд"], ["employees", "Сотрудники"], ["report", "Отчёт"]].map(([t, label]) => (
             <button key={t} onClick={() => setAdminTab(t)}
               style={{ padding: "7px 16px", borderRadius: 20, border: "none", background: adminTab === t ? accent : "#fff", color: adminTab === t ? "#fff" : "#888", fontSize: 13, fontWeight: adminTab === t ? 500 : 400, cursor: "pointer", whiteSpace: "nowrap" }}>
               {label}
@@ -373,6 +411,88 @@ export default function App() {
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {adminTab === "report" && (
+            <div>
+              <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "center" }}>
+                <input type="month" value={reportMonth} onChange={e => setReportMonth(e.target.value)}
+                  style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd", fontSize: 15, background: "#f5f5f5" }} />
+                <button onClick={exportCSV} style={{ padding: "10px 14px", borderRadius: 10, background: accentBg, border: "none", color: accent, fontSize: 13, fontWeight: 500, cursor: "pointer", whiteSpace: "nowrap" }}>
+                  ⬇ CSV
+                </button>
+              </div>
+
+              {reportLoading ? (
+                <div style={{ textAlign: "center", padding: 32, color: "#888", fontSize: 13 }}>Загрузка...</div>
+              ) : reportData.length === 0 ? (
+                <div style={{ textAlign: "center", padding: 32, color: "#888", fontSize: 13 }}>Нет данных за этот период</div>
+              ) : (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
+                    {[
+                      ["Смен", reportData.length, accent],
+                      ["Опозданий", reportData.filter(r => r.late_minutes > 0).length, warn],
+                      ["Ср. опоздание", reportData.filter(r => r.late_minutes > 0).length > 0
+                        ? Math.round(reportData.filter(r => r.late_minutes > 0).reduce((s, r) => s + r.late_minutes, 0) / reportData.filter(r => r.late_minutes > 0).length) + " мин"
+                        : "0 мин", "#888"],
+                    ].map(([label, val, color]) => (
+                      <div key={label} style={{ background: "#fff", borderRadius: 12, padding: "12px 10px", textAlign: "center", border: "1px solid #e8e8e8" }}>
+                        <div style={{ fontSize: 22, fontWeight: 600, color }}>{val}</div>
+                        <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>{label}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {reportData.map((r, i) => {
+                    const emp = r.employees;
+                    return (
+                      <div key={i} style={s.card}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <div style={s.avatar(accentBg, accent)}>{emp?.initials || "?"}</div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 500, fontSize: 14 }}>{emp?.name}</div>
+                            <div style={{ fontSize: 12, color: "#888" }}>
+                              {new Date(r.shift_date).toLocaleDateString("ru-RU", { day: "numeric", month: "long", weekday: "short" })}
+                            </div>
+                          </div>
+                          {r.late_minutes > 0
+                            ? <span style={s.badge(warnBg, warn)}>+{r.late_minutes} мин</span>
+                            : <span style={s.badge(accentBg, accent)}>вовремя</span>}
+                        </div>
+                        <div style={{ display: "flex", gap: 20, marginTop: 10, paddingTop: 10, borderTop: "1px solid #f0f0f0" }}>
+                          <div>
+                            <div style={{ fontSize: 11, color: "#888" }}>Приход</div>
+                            <div style={{ fontSize: 14, fontWeight: 500 }}>{r.start_at ? fmt(r.start_at) : "—"}</div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 11, color: "#888" }}>Уход</div>
+                            <div style={{ fontSize: 14, fontWeight: 500 }}>{r.end_at ? fmt(r.end_at) : "—"}</div>
+                          </div>
+                          {r.start_at && r.end_at && (
+                            <div>
+                              <div style={{ fontSize: 11, color: "#888" }}>Итого</div>
+                              <div style={{ fontSize: 14, fontWeight: 500 }}>
+                                {(() => {
+                                  const mins = Math.round((new Date(r.end_at) - new Date(r.start_at)) / 60000);
+                                  return `${Math.floor(mins/60)}ч ${mins%60}м`;
+                                })()}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        {r.photo_url && (
+                          <div style={{ marginTop: 8 }}>
+                            <img src={r.photo_url} onClick={() => setSelectedSelfie({ url: r.photo_url, name: emp?.name, time: fmt(r.start_at), date: fmtDate(r.shift_date) })}
+                              style={{ width: 48, height: 48, borderRadius: 8, objectFit: "cover", transform: "scaleX(-1)", cursor: "pointer", border: "2px solid #e8e8e8" }} />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
             </div>
           )}
 
