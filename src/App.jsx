@@ -83,12 +83,17 @@ export default function App() {
   const canvasRef = useRef(null);
 
   useEffect(() => { loadAll(); }, []);
+
   useEffect(() => {
     if (screen !== "selfie" && cameraStream) {
       cameraStream.getTracks().forEach(t => t.stop());
       setCameraStream(null);
     }
   }, [screen]);
+
+  useEffect(() => {
+    if (adminAuthed && adminTab === "report") loadReport();
+  }, [adminAuthed, adminTab, reportMonth, selectedVenueId]);
 
   async function loadAll() {
     setLoading(true);
@@ -110,6 +115,39 @@ export default function App() {
       if (vens && vens.length > 0 && !selectedVenueId) setSelectedVenueId(vens[0].id);
     } catch (e) { setError("Ошибка: " + (e.message || JSON.stringify(e))); }
     setLoading(false);
+  }
+
+  async function loadReport() {
+    setReportLoading(true);
+    const from = `${reportMonth}-01`;
+    const to = `${reportMonth}-31`;
+    const { data, error } = await supabase
+      .from("attendance")
+      .select("*, employees(name, initials, role, venue_id)")
+      .gte("shift_date", from)
+      .lte("shift_date", to)
+      .order("shift_date", { ascending: false });
+    if (!error) setReportData((data || []).filter(r => r.employees?.venue_id === selectedVenueId));
+    setReportLoading(false);
+  }
+
+  function exportCSV() {
+    const rows = [["Дата", "Сотрудник", "Роль", "Приход", "Уход", "Опоздание (мин)"]];
+    reportData.forEach(r => {
+      rows.push([
+        r.shift_date,
+        r.employees?.name || "",
+        ROLES[r.employees?.role] || "",
+        r.start_at ? fmt(r.start_at) : "—",
+        r.end_at ? fmt(r.end_at) : "—",
+        r.late_minutes || 0,
+      ]);
+    });
+    const csv = rows.map(r => r.join(",")).join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `otchet_${reportMonth}.csv`; a.click();
   }
 
   function checkAdminPassword() {
@@ -224,42 +262,7 @@ export default function App() {
     setSaving(false);
   }
 
-  useEffect(() => {
-    if (adminAuthed && adminTab === "report") loadReport();
-  }, [adminAuthed, adminTab, reportMonth, selectedVenueId]);
-
-  async function loadReport() {
-    setReportLoading(true);
-    const from = `${reportMonth}-01`;
-    const to = `${reportMonth}-31`;
-    const { data, error } = await supabase
-      .from("attendance")
-      .select("*, employees(name, initials, role, venue_id)")
-      .gte("shift_date", from)
-      .lte("shift_date", to)
-      .order("shift_date", { ascending: false });
-    if (!error) setReportData((data || []).filter(r => r.employees?.venue_id === selectedVenueId));
-    setReportLoading(false);
-  }
-
-  function exportCSV() {
-    const rows = [["Дата", "Сотрудник", "Роль", "Приход", "Уход", "Опоздание (мин)"]];
-    reportData.forEach(r => {
-      rows.push([
-        r.shift_date,
-        r.employees?.name || "",
-        ROLES[r.employees?.role] || "",
-        r.start_at ? fmt(r.start_at) : "—",
-        r.end_at ? fmt(r.end_at) : "—",
-        r.late_minutes || 0,
-      ]);
-    });
-    const csv = rows.map(r => r.join(",")).join("\n");
-    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `otchet_${reportMonth}.csv`; a.click();
-  }
+  async function saveSchedule(empId, start, end) {
     const existing = schedules[empId];
     if (existing) await supabase.from("schedules").update({ start_time: start, end_time: end }).eq("employee_id", empId);
     else await supabase.from("schedules").insert({ employee_id: empId, start_time: start, end_time: end });
@@ -308,7 +311,7 @@ export default function App() {
         <img src={selectedSelfie.url} alt="selfie" style={{ width: "100%", borderRadius: 16, transform: "scaleX(-1)" }} />
         <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
           <button onClick={() => setSelectedSelfie(null)} style={{ ...s.btn(accentBg, accent), flex: 1 }}>✓ Принять</button>
-          <button style={{ ...s.btn(dangerBg, danger), flex: 1 }}>✗ Отклонить</button>
+          <button onClick={() => setSelectedSelfie(null)} style={{ ...s.btn(dangerBg, danger), flex: 1 }}>✗ Отклонить</button>
         </div>
       </div>
     </div>
@@ -375,7 +378,6 @@ export default function App() {
                   </div>
                 ))}
               </div>
-
               <div style={{ fontWeight: 500, fontSize: 15, marginBottom: 10 }}>Журнал сегодня</div>
               {venueEmps.length === 0 && <div style={{ fontSize: 13, color: "#888" }}>Нет сотрудников в этом объекте</div>}
               {venueEmps.map(e => {
@@ -423,7 +425,6 @@ export default function App() {
                   ⬇ CSV
                 </button>
               </div>
-
               {reportLoading ? (
                 <div style={{ textAlign: "center", padding: 32, color: "#888", fontSize: 13 }}>Загрузка...</div>
               ) : reportData.length === 0 ? (
@@ -444,7 +445,6 @@ export default function App() {
                       </div>
                     ))}
                   </div>
-
                   {reportData.map((r, i) => {
                     const emp = r.employees;
                     return (
@@ -474,19 +474,14 @@ export default function App() {
                             <div>
                               <div style={{ fontSize: 11, color: "#888" }}>Итого</div>
                               <div style={{ fontSize: 14, fontWeight: 500 }}>
-                                {(() => {
-                                  const mins = Math.round((new Date(r.end_at) - new Date(r.start_at)) / 60000);
-                                  return `${Math.floor(mins/60)}ч ${mins%60}м`;
-                                })()}
+                                {(() => { const mins = Math.round((new Date(r.end_at) - new Date(r.start_at)) / 60000); return `${Math.floor(mins / 60)}ч ${mins % 60}м`; })()}
                               </div>
                             </div>
                           )}
                         </div>
                         {r.photo_url && (
-                          <div style={{ marginTop: 8 }}>
-                            <img src={r.photo_url} onClick={() => setSelectedSelfie({ url: r.photo_url, name: emp?.name, time: fmt(r.start_at), date: fmtDate(r.shift_date) })}
-                              style={{ width: 48, height: 48, borderRadius: 8, objectFit: "cover", transform: "scaleX(-1)", cursor: "pointer", border: "2px solid #e8e8e8" }} />
-                          </div>
+                          <img src={r.photo_url} onClick={() => setSelectedSelfie({ url: r.photo_url, name: emp?.name, time: fmt(r.start_at), date: fmtDate(r.shift_date) })}
+                            style={{ width: 48, height: 48, borderRadius: 8, objectFit: "cover", transform: "scaleX(-1)", cursor: "pointer", border: "2px solid #e8e8e8", marginTop: 8 }} />
                         )}
                       </div>
                     );
@@ -502,7 +497,6 @@ export default function App() {
                 style={{ ...s.btn(accent, "#fff"), marginBottom: 14 }}>
                 + Добавить сотрудника
               </button>
-
               {addingEmp && (
                 <div style={{ ...s.card, marginBottom: 14, border: `1px solid ${accent}` }}>
                   <div style={{ fontWeight: 500, fontSize: 14, marginBottom: 12 }}>Новый сотрудник</div>
@@ -536,7 +530,6 @@ export default function App() {
                   </div>
                 </div>
               )}
-
               {employees.filter(e => e.venue_id === selectedVenueId).map(e => {
                 const sch = schedules[e.id];
                 const isEditing = editingEmp?.id === e.id;
